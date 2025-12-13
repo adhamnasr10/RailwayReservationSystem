@@ -1,0 +1,470 @@
+#include <iostream>
+#include <string>
+using namespace std;
+
+// =================== CONFIG ===================
+const int MAX_TRAINS      = 100;
+const int MAX_PASSENGERS  = 1000;
+const int MAX_SEATS       = 100;
+const int MAX_WAITING     = 200;
+const int TRAIN_HASH_SIZE = 211;   // رقم أولي للـ hashing
+
+// =================== STACK (for seat numbers) ===================
+struct IntStack {
+    int data[MAX_SEATS];
+    int top;
+
+    void initializeStack() { top = -1; }
+    bool isEmptyStack() const { return top == -1; }
+    bool isFullStack() const { return top == MAX_SEATS - 1; }
+
+    void push(int x) {
+        if (!isFullStack()) data[++top] = x;
+        else cout << "Seat stack is full!\n";
+    }
+
+    int pop() {
+        if (!isEmptyStack()) return data[top--];
+        cout << "Seat stack is empty!\n";
+        return -1;
+    }
+
+    int peek() const {
+        if (!isEmptyStack()) return data[top];
+        return -1;
+    }
+};
+
+// =================== QUEUE (for waiting list) ===================
+struct IntQueue {
+    int data[MAX_WAITING];
+    int front, rear, count;
+
+    void initializeQueue() {
+        front = 0;
+        rear  = -1;
+        count = 0;
+    }
+
+    bool isEmptyQueue() const { return count == 0; }
+    bool isFullQueue()  const { return count == MAX_WAITING; }
+
+    void enqueue(int x) {
+        if (isFullQueue()) {
+            cout << "Waiting list is full!\n";
+            return;
+        }
+        rear = (rear + 1) % MAX_WAITING;
+        data[rear] = x;
+        count++;
+    }
+
+    int dequeue() {
+        if (isEmptyQueue()) {
+            cout << "Waiting list is empty!\n";
+            return -1;
+        }
+        int x = data[front];
+        front = (front + 1) % MAX_WAITING;
+        count--;
+        return x;
+    }
+};
+
+// =================== DATA MODELS ===================
+struct Train {
+    int    id;
+    string name;
+    string source;
+    string destination;
+    int    totalSeats;
+    int    bookedSeats;
+
+    IntStack cancelledSeats;   // stack of free seats (from cancellations)
+    IntQueue waitingList;      // queue of passenger indices in waiting list
+
+    void init() {
+        bookedSeats = 0;
+        cancelledSeats.initializeStack();
+        waitingList.initializeQueue();
+    }
+};
+
+struct Passenger {
+    int    id;
+    string name;
+    int    trainId;
+    int    seatNo;   // -1 = waiting / no seat
+    bool   active;
+};
+
+// =================== GLOBAL STORAGE ===================
+Train     trains[MAX_TRAINS];
+int       trainCount = 0;
+
+Passenger passengers[MAX_PASSENGERS];
+int       passengerCount = 0;
+
+// ------- Hash table to search trains by ID quickly -------
+int trainHashTable[TRAIN_HASH_SIZE]; // stores index in trains[], or -1
+
+int hashTrainId(int id) {
+    if (id < 0) id = -id;
+    return id % TRAIN_HASH_SIZE;
+}
+
+void initTrainHashTable() {
+    for (int i = 0; i < TRAIN_HASH_SIZE; ++i)
+        trainHashTable[i] = -1;
+}
+
+// Linear probing
+void insertTrainIntoHash(int trainId, int index) {
+    int h = hashTrainId(trainId);
+    int start = h;
+    while (trainHashTable[h] != -1) {
+        h = (h + 1) % TRAIN_HASH_SIZE;
+        if (h == start) {
+            cout << "Train hash table is full!\n";
+            return;
+        }
+    }
+    trainHashTable[h] = index;
+}
+
+int findTrainIndexById(int trainId) {
+    int h = hashTrainId(trainId);
+    int start = h;
+    while (trainHashTable[h] != -1) {
+        int idx = trainHashTable[h];
+        if (trains[idx].id == trainId)
+            return idx;
+        h = (h + 1) % TRAIN_HASH_SIZE;
+        if (h == start) break;
+    }
+    return -1;
+}
+
+// =================== HELPER FUNCTIONS ===================
+void listTrains() {
+    if (trainCount == 0) {
+        cout << "No trains available yet.\n";
+        return;
+    }
+    cout << "\n--- Trains ---\n";
+    for (int i = 0; i < trainCount; ++i) {
+        cout << "ID: " << trains[i].id
+             << " | " << trains[i].name
+             << " | " << trains[i].source << " -> " << trains[i].destination
+             << " | Seats: " << trains[i].bookedSeats
+             << "/" << trains[i].totalSeats << '\n';
+    }
+    cout << "--------------\n";
+}
+
+void listPassengers() {
+    if (passengerCount == 0) {
+        cout << "No passengers yet.\n";
+        return;
+    }
+    cout << "\n--- Passengers ---\n";
+    for (int i = 0; i < passengerCount; ++i) {
+        cout << "PID: " << passengers[i].id
+             << " | Name: " << passengers[i].name
+             << " | Train: " << passengers[i].trainId
+             << " | Seat: ";
+        if (passengers[i].seatNo == -1)
+            cout << "WAITING";
+        else
+            cout << passengers[i].seatNo;
+        if (!passengers[i].active) cout << " (CANCELLED)";
+        cout << '\n';
+    }
+    cout << "------------------\n";
+}
+
+// =================== CORE OPERATIONS ===================
+
+// 1) Add Train
+void addTrain() {
+    if (trainCount >= MAX_TRAINS) {
+        cout << "Train list is full!\n";
+        return;
+    }
+
+    Train t;
+    cout << "Enter train ID: ";
+    cin >> t.id;
+
+    if (findTrainIndexById(t.id) != -1) {
+        cout << "Train with this ID already exists!\n";
+        return;
+    }
+
+    cin.ignore();
+    cout << "Enter train name: ";
+    getline(cin, t.name);
+
+    cout << "Enter source station: ";
+    getline(cin, t.source);
+
+    cout << "Enter destination station: ";
+    getline(cin, t.destination);
+
+    cout << "Enter total seats (<= " << MAX_SEATS << "): ";
+    cin >> t.totalSeats;
+    if (t.totalSeats > MAX_SEATS) {
+        cout << "Too many seats, using " << MAX_SEATS << " instead.\n";
+        t.totalSeats = MAX_SEATS;
+    }
+
+    t.init();
+
+    trains[trainCount] = t;
+    insertTrainIntoHash(t.id, trainCount);
+    trainCount++;
+
+    cout << "Train added successfully.\n";
+}
+
+// Helper: create passenger record
+int createPassenger(const string& name, int trainId, int seatNo) {
+    if (passengerCount >= MAX_PASSENGERS) {
+        cout << "Passenger list is full!\n";
+        return -1;
+    }
+    Passenger p;
+    p.id      = passengerCount + 1;   // simple auto-increment
+    p.name    = name;
+    p.trainId = trainId;
+    p.seatNo  = seatNo;
+    p.active  = true;
+    passengers[passengerCount] = p;
+    passengerCount++;
+    return p.id;
+}
+
+// 2) Book Ticket
+void bookTicket() {
+    if (trainCount == 0) {
+        cout << "No trains yet. Add a train first.\n";
+        return;
+    }
+
+    int trainId;
+    string name;
+
+    cout << "Enter train ID to book: ";
+    cin >> trainId;
+    int idx = findTrainIndexById(trainId);
+    if (idx == -1) {
+        cout << "Train not found!\n";
+        return;
+    }
+
+    cin.ignore();
+    cout << "Enter passenger name: ";
+    getline(cin, name);
+
+    Train &tr = trains[idx];
+
+    int seatNo = -1;
+
+    // First use any seat freed in the stack (from cancellations)
+    if (!tr.cancelledSeats.isEmptyStack()) {
+        seatNo = tr.cancelledSeats.pop();
+    }
+    else if (tr.bookedSeats < tr.totalSeats) {
+        // New seat at the end
+        tr.bookedSeats++;
+        seatNo = tr.bookedSeats;
+    }
+    else {
+        // No seat available -> waiting list
+        int pid = createPassenger(name, trainId, -1);
+        if (pid == -1) return;
+        tr.waitingList.enqueue(pid);
+        cout << "Train is full. Passenger put in WAITING LIST. "
+             << "Passenger ID: " << pid << '\n';
+        return;
+    }
+
+    int pid = createPassenger(name, trainId, seatNo);
+    if (pid == -1) return;
+
+    cout << "Ticket booked successfully.\n";
+    cout << "Passenger ID: " << pid << " | Seat No: " << seatNo << '\n';
+}
+
+// 3) Cancel Ticket
+void cancelTicket() {
+    if (passengerCount == 0) {
+        cout << "No passengers to cancel.\n";
+        return;
+    }
+
+    int pid;
+    cout << "Enter Passenger ID to cancel: ";
+    cin >> pid;
+
+    int pIndex = -1;
+    for (int i = 0; i < passengerCount; ++i) {
+        if (passengers[i].id == pid) {
+            pIndex = i;
+            break;
+        }
+    }
+
+    if (pIndex == -1) {
+        cout << "Passenger not found.\n";
+        return;
+    }
+
+    Passenger &p = passengers[pIndex];
+
+    if (!p.active) {
+        cout << "This ticket is already cancelled.\n";
+        return;
+    }
+
+    int tIndex = findTrainIndexById(p.trainId);
+    if (tIndex == -1) {
+        cout << "Related train not found (data error).\n";
+        return;
+    }
+
+    Train &tr = trains[tIndex];
+
+    // If passenger had a real seat
+    if (p.seatNo != -1) {
+        cout << "Cancelling seat " << p.seatNo
+             << " on train " << tr.id << '\n';
+
+        // push seat into stack
+        tr.cancelledSeats.push(p.seatNo);
+
+        // Try to assign this seat to waiting passenger (if any)
+        if (!tr.waitingList.isEmptyQueue()) {
+            int waitingPid = tr.waitingList.dequeue();
+
+            // find waiting passenger index
+            int wIndex = -1;
+            for (int i = 0; i < passengerCount; ++i) {
+                if (passengers[i].id == waitingPid) {
+                    wIndex = i;
+                    break;
+                }
+            }
+
+            if (wIndex != -1) {
+                int freedSeat = tr.cancelledSeats.pop();
+                passengers[wIndex].seatNo = freedSeat;
+                cout << "Seat reassigned to waiting passenger ID "
+                     << waitingPid << " | new seat: " << freedSeat << '\n';
+            }
+        }
+        else {
+            // No one waiting -> one booked seat effectively free
+            if (tr.bookedSeats > 0)
+                tr.bookedSeats--;
+        }
+    }
+    else {
+        // Passenger was in waiting list only
+        cout << "Passenger was only in waiting list, removing.\n";
+        // Note: for simplicity we don't remove from queue structure here
+        // because it is circular and we don't track by ID.
+        // But passenger will be marked inactive.
+    }
+
+    p.active = false;
+    p.seatNo = -1;
+
+    cout << "Cancellation done.\n";
+}
+
+// 4) Search Train
+void searchTrain() {
+    int id;
+    cout << "Enter train ID to search: ";
+    cin >> id;
+    int idx = findTrainIndexById(id);
+    if (idx == -1) {
+        cout << "Train not found.\n";
+        return;
+    }
+    Train &t = trains[idx];
+    cout << "Train found:\n";
+    cout << "ID: " << t.id << '\n';
+    cout << "Name: " << t.name << '\n';
+    cout << "Route: " << t.source << " -> " << t.destination << '\n';
+    cout << "Seats: " << t.bookedSeats << "/" << t.totalSeats << '\n';
+}
+
+// 5) View waiting list for a train (debug-style)
+void viewWaitingListForTrain() {
+    int trainId;
+    cout << "Enter train ID: ";
+    cin >> trainId;
+    int idx = findTrainIndexById(trainId);
+    if (idx == -1) {
+        cout << "Train not found.\n";
+        return;
+    }
+    Train &tr = trains[idx];
+
+    if (tr.waitingList.isEmptyQueue()) {
+        cout << "Waiting list is empty.\n";
+        return;
+    }
+
+    cout << "Note: This simple view prints internal queue array (not in order perfectly).\n";
+    cout << "Approx waiting passenger IDs: ";
+    int c = tr.waitingList.count;
+    int pos = tr.waitingList.front;
+    for (int i = 0; i < c; ++i) {
+        cout << tr.waitingList.data[pos] << " ";
+        pos = (pos + 1) % MAX_WAITING;
+    }
+    cout << '\n';
+}
+
+// =================== MAIN MENU ===================
+void showMenu() {
+    cout << "\n===== Railway Reservation System =====\n";
+    cout << "1. Add Train\n";
+    cout << "2. List Trains\n";
+    cout << "3. Book Ticket\n";
+    cout << "4. Cancel Ticket\n";
+    cout << "5. Search Train\n";
+    cout << "6. View All Passengers\n";
+    cout << "7. View Waiting List (for a train)\n";
+    cout << "0. Exit\n";
+    cout << "Choose: ";
+}
+
+int main() {
+    initTrainHashTable();
+
+    int choice;
+    do {
+        showMenu();
+        cin >> choice;
+        cout << '\n';
+
+        switch (choice) {
+            case 1: addTrain(); break;
+            case 2: listTrains(); break;
+            case 3: bookTicket(); break;
+            case 4: cancelTicket(); break;
+            case 5: searchTrain(); break;
+            case 6: listPassengers(); break;
+            case 7: viewWaitingListForTrain(); break;
+            case 0: cout << "Exiting...\n"; break;
+            default: cout << "Invalid choice!\n";
+        }
+
+    } while (choice != 0);
+
+    return 0;
+}
